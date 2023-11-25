@@ -1,0 +1,8 @@
+(executable
+ (public_name chip8)
+ (name main)
+ (flags
+  (-w -32))
+ (libraries chip8 base stdio)
+ (preprocess
+  (pps ppx_jane ppx_sexp_conv ppx_compare)))
