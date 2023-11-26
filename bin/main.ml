@@ -86,18 +86,12 @@ module Memory = struct
     |> Sexp.List
   ;;
 
-  (* utils *)
-  let nibbles_of_uint8 ~memory ~index =
-    let u8 = memory.(index) in
-    let fst = u8 land (0xF0 lsr 4) |> Uint8.of_int in
-    let snd = u8 land 0x0F |> Uint8.of_int in
-    [| fst; snd |]
-  ;;
+  let get_uint8 ~memory ~index = memory.(index)
 
-  let nibbles_of_uint16 ~memory ~index =
-    let fst, snd = nibbles_of_uint8 ~memory ~index in
-    let thrd, fth = nibbles_of_uint8 ~memory ~index:(index + 1) in
-    [| fst; snd; thrd; fth |]
+  let get_uint16 ~memory ~index =
+    let fst_byte = get_uint8 ~memory ~index in
+    let snd_byte = get_uint8 ~memory ~index:(index + 1) in
+    (Uint8.to_int fst_byte lsl 8) + Uint8.to_int snd_byte |> Uint16.of_int
   ;;
 end
 
@@ -147,6 +141,21 @@ module Cpu = struct
     ; memory = Memory.load ~rom ~memory:Memory.init
     ; display = Display.init
     }
+  ;;
+
+  (* utils *)
+  let nibbles_of_uint8 (u8 : Uint8.t) =
+    let open Uint8 in
+    let fst = shift_left (logand u8 (of_int 0xF0)) 4 in
+    let snd = logand u8 (of_int 0x0F) in
+    [| fst; snd |]
+  ;;
+
+  let nibbles_of_uint16 u16 : Uint16.t =
+    let open Uint16 in
+    let fst, snd = nibbles_of_uint8 (shift_right u16 8) in
+    let thrd, fth = nibbles_of_uint8 (logand u16 (of_int 0x00FF)) in
+    [| fst; snd; thrd; fth |]
   ;;
 
   let step t = failwith "todo"
