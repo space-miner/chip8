@@ -101,6 +101,7 @@ module Register = struct
   type t = Uint8.t array [@@deriving sexp]
 
   let init = Array.create ~len:16 Uint8.zero
+  let update ~registers ~index ~value = registers.(index) <- value
 end
 
 module Display = struct
@@ -155,47 +156,78 @@ module Cpu = struct
     let snd_u8 = Uint16.(logand u16 (of_int 0x00ff) |> to_uint8) in
     let fst_snd_nibbles = nibbles_of_uint8 fst_u8 in
     let thrd_frth_nibbles = nibbles_of_uint8 snd_u8 in
-    [| fst_snd_nibbles.(0); fst_snd_nibbles.(1); thrd_frth_nibbles.(0); thrd_frth_nibbles.(1) |]
+    [| fst_snd_nibbles.(0)
+     ; fst_snd_nibbles.(1)
+     ; thrd_frth_nibbles.(0)
+     ; thrd_frth_nibbles.(1)
+    |]
   ;;
 
-  let step (state : t) =
-    let instr =
-      Memory.read_uint16 ~memory:state.memory ~index:(Uint16.to_int state.pc)
-    in
-    let old_pc = state.pc in
+  let step (state : t) : t =
+    let pc_u16 = state.pc in
+    let pc_int = Uint16.to_int pc_u16 in
+    let fst_u8 = Memory.read_uint8 ~memory:state.memory ~index:pc_int in
+    let snd_u8 = Memory.read_uint8 ~memory:state.memory ~index:(pc_int + 1) in
+    let instr_u16 = Memory.read_uint16 ~memory:state.memory ~index:pc_int in
+    let addr_u16 = Uint16.(logand instr_u16 (of_int 0x0FFF)) in
     let err () =
       failwith
         (Printf.sprintf
            "unimplemented: 0x%04x (pc=0x%04x)"
-           (Uint16.to_int instr)
-           (Uint16.to_int old_pc))
+           (Uint16.to_int instr_u16)
+           (Uint16.to_int pc_u16))
     in
-    let _ = state.pc <- Uint16.(state.pc + two) in
-    let addr = Uint16.(logand instr (of_int 0x0FFF)) in
-    let nibbles = nibbles_of_uint16 instr in
-    let op = nibbles.(0) in
-    let x = nibbles.(1) in
-    let y = nibbles.(2) in
-    let n = nibbles.(3) in
-    match op with
-    | Uint8.of_int 0x0 -> ()
-    | Uint8.of_int 0x1 -> ()
-    | Uint8.of_int 0x2 -> ()
-    | Uint8.of_int 0x3 -> ()
-    | Uint8.of_int 0x4 -> ()
-    | Uint8.of_int 0x5 -> ()
-    | Uint8.of_int 0x6 -> ()
-    | Uint8.of_int 0x7 -> ()
-    | Uint8.of_int 0x8 -> ()
-    | Uint8.of_int 0x9 -> ()
-    | Uint8.of_int 0xa -> ()
-    | Uint8.of_int 0xb -> ()
-    | Uint8.of_int 0xc -> ()
-    | Uint8.of_int 0xd -> ()
-    | Uint8.of_int 0xe -> ()
-    | Uint8.of_int 0xf -> ()
-    | _ -> err()
-  ;;
+    (* update pc to next instruction *)
+    state.pc <- Uint16.(state.pc + two);
+    let nibbles = nibbles_of_uint16 instr_u16 in
+    let op_u8 = nibbles.(0) in
+    let x_u8 = nibbles.(1) in
+    let y_u8 = nibbles.(2) in
+    let n_u8 = nibbles.(3) in
+    let fst_int = Uint8.to_int fst_u8 in
+    let snd_int = Uint8.to_int snd_u8 in
+    let instr_int = Uint16.to_int instr_u16 in
+    let addr_int = Uint16.to_int addr_u16 in
+    let op_int = Uint8.to_int op_u8 in
+    let x_int = Uint8.to_int x_u8 in
+    let y_int = Uint8.to_int y_u8 in
+    let n_int = Uint8.to_int n_u8 in
+    match op_int with
+    | 0x0 ->
+      (match instr_int with
+       | 0x00e0 -> state.display <- Display.init; state
+       | 0x00ee -> state.pc <- Stack.pop_exn state.stack; state
+       | _ -> err ())
+    | 0x1 -> state.pc <- addr_u16; state
+    | 0x2 ->
+      Stack.push state.stack state.pc;
+      state.pc <- addr_u16;
+      state
+    | 0x3 -> (
+        if (Uint8.compare state.registers.(x_int) snd_u8) = 0 then
+        (state.pc <- Uint16.(state.pc + two); state) else state
+      )
+    | 0x4 -> (
+        if (Uint8.compare state.registers.(x_int) snd_u8) <> 0 then
+        (state.pc <- Uint16.(state.pc + two); state) else state
+      )
+    | 0x5 -> (
+        if (Uint8.compare state.registers.(x_int) state.registers.(y_int)) = 0 then
+        (state.pc <- Uint16.(state.pc + two); state) else state
+      )
+    | 0x6 -> (
+        state.registers.(x_int) <- snd_u8; state
+      )
+    | 0x7 -> ()
+    | 0x8 -> ()
+    | 0x9 -> ()
+    | 0xa -> ()
+    | 0xb -> ()
+    | 0xc -> ()
+    | 0xd -> ()
+    | 0xe -> ()
+    | 0xf -> ()
+    | _ -> err ()
 end
 
 (* module Timer = struct end *)
