@@ -63,6 +63,7 @@ module Memory = struct
     let digits_flatten =
       Array.fold Font.digits ~init:[||] ~f:(fun acc digit -> Array.append acc digit)
     in
+    (* splice digits into memory at 0x00 *)
     Array.blit
       ~src:digits_flatten
       ~src_pos:0
@@ -73,6 +74,7 @@ module Memory = struct
   ;;
 
   let load ~rom ~memory =
+    (* splice rom into memory at 0x0200 *)
     Array.blit ~src:rom ~src_pos:0 ~dst:memory ~dst_pos:rom_start ~len:(Array.length rom);
     memory
   ;;
@@ -82,6 +84,20 @@ module Memory = struct
       Sexp.Atom (Printf.sprintf "0x%02X" cell) :: acc)
     |> List.rev
     |> Sexp.List
+  ;;
+
+  (* utils *)
+  let nibbles_of_uint8 ~memory ~index =
+    let u8 = memory.(index) in
+    let fst = u8 land (0xF0 lsr 4) |> Uint8.of_int in
+    let snd = u8 land 0x0F |> Uint8.of_int in
+    [| fst; snd |]
+  ;;
+
+  let nibbles_of_uint16 ~memory ~index =
+    let fst, snd = nibbles_of_uint8 ~memory ~index in
+    let thrd, fth = nibbles_of_uint8 ~memory ~index:(index + 1) in
+    [| fst; snd; thrd; fth |]
   ;;
 end
 
@@ -143,5 +159,6 @@ let () =
   print_endline "Hello, World!";
   let rom = [| 0x12; 0x34; 0xFF; 0xFF |] |> Array.map ~f:Uint8.of_int in
   let memory = Memory.load ~rom ~memory:Memory.init in
-  print_s [%sexp (memory : Uint8.t array)] (* same here, it's not happy with type Memory.t *)
+  print_s [%sexp (memory : Uint8.t array)]
 ;;
+(* same here, it's not happy with type Memory.t *)
