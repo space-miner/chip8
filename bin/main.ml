@@ -73,7 +73,7 @@ module Memory = struct
     memory
   ;;
 
-  let load ~rom ~memory =
+  let load ~rom ~memory : t =
     (* splice rom into memory at 0x0200 *)
     Array.blit ~src:rom ~src_pos:0 ~dst:memory ~dst_pos:rom_start ~len:(Array.length rom);
     memory
@@ -136,7 +136,7 @@ module Cpu = struct
     }
   [@@deriving fields, sexp]
 
-  let init ~rom =
+  let init ~rom : t =
     { pc = Uint16.of_int Memory.rom_start
     ; index = Uint16.zero
     ; stack = Stack.create ()
@@ -335,15 +335,28 @@ module Cpu = struct
        | _ -> err ())
     | _ -> err ()
   ;;
+
+  let rec run state =
+    print_s [%sexp (state : t)];
+    let state = step state in
+    run state
+  ;;
 end
 
 (* module Timer = struct end *)
 (* module Keypad = struct end *)
 
+let read_rom path : Uint8.t array =
+  let bytes = In_channel.read_all path in
+  String.to_array bytes |> Array.map ~f:(fun ch -> ch |> Char.to_int |> Uint8.of_int)
+;;
+
 let () =
   print_endline "Hello, World!";
-  let rom = [| 0x12; 0x34; 0xFF; 0xFF |] |> Array.map ~f:Uint8.of_int in
+  let rom = read_rom "./roms/pong.rom" in
   let memory = Memory.load ~rom ~memory:Memory.init in
   (* same here, it's not happy with type Memory.t *)
-  print_s [%sexp (memory : Uint8.t array)]
+  print_s [%sexp (memory : Uint8.t array)];
+  let state = Cpu.init ~rom in
+  Cpu.run state
 ;;
