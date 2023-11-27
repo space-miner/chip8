@@ -97,11 +97,12 @@ module Memory = struct
   ;;
 end
 
-module Register = struct
+module Registers = struct
   type t = Uint8.t array [@@deriving sexp]
 
   let init = Array.create ~len:16 Uint8.zero
-  let update ~registers ~index ~value = registers.(index) <- value
+  let value t ~register = t.(register)
+  let update t ~register ~value = t.(register) <- value
 end
 
 module Display = struct
@@ -128,7 +129,7 @@ module Cpu = struct
     { mutable pc : Uint16.t
     ; mutable index : Uint16.t
     ; mutable stack : Uint16.t Stack.t
-    ; mutable registers : Register.t
+    ; mutable registers : Registers.t
     ; mutable memory : Uint8.t array (* idk why it's not happy with type Memory.t *)
     ; mutable display : Display.t
     }
@@ -138,7 +139,7 @@ module Cpu = struct
     { pc = Uint16.of_int Memory.rom_start
     ; index = Uint16.zero
     ; stack = Stack.create ()
-    ; registers = Register.init
+    ; registers = Registers.init
     ; memory = Memory.load ~rom ~memory:Memory.init
     ; display = Display.init
     }
@@ -148,19 +149,15 @@ module Cpu = struct
   let nibbles_of_uint8 u8 =
     let fst_nibble = Uint8.(shift_right (logand u8 (of_int 0xf0)) 4) in
     let snd_nibble = Uint8.(logand u8 (of_int 0x0f)) in
-    [| fst_nibble; snd_nibble |]
+    fst_nibble, snd_nibble
   ;;
 
-  let nibbles_of_uint16 u16 : Uint8.t array =
+  let nibbles_of_uint16 u16 =
     let fst_u8 = Uint16.(shift_right u16 8 |> to_uint8) in
     let snd_u8 = Uint16.(logand u16 (of_int 0x00ff) |> to_uint8) in
-    let fst_snd_nibbles = nibbles_of_uint8 fst_u8 in
-    let thrd_frth_nibbles = nibbles_of_uint8 snd_u8 in
-    [| fst_snd_nibbles.(0)
-     ; fst_snd_nibbles.(1)
-     ; thrd_frth_nibbles.(0)
-     ; thrd_frth_nibbles.(1)
-    |]
+    let fst_nibble, snd_nibble = nibbles_of_uint8 fst_u8 in
+    let thrd_nibble, frth_nibble = nibbles_of_uint8 snd_u8 in
+    fst_nibble, snd_nibble, thrd_nibble, frth_nibble
   ;;
 
   let step (state : t) : t =
@@ -179,55 +176,122 @@ module Cpu = struct
     in
     (* update pc to next instruction *)
     state.pc <- Uint16.(state.pc + two);
-    let nibbles = nibbles_of_uint16 instr_u16 in
-    let op_u8 = nibbles.(0) in
-    let x_u8 = nibbles.(1) in
-    let y_u8 = nibbles.(2) in
-    let n_u8 = nibbles.(3) in
-    let fst_int = Uint8.to_int fst_u8 in
-    let snd_int = Uint8.to_int snd_u8 in
-    let instr_int = Uint16.to_int instr_u16 in
-    let addr_int = Uint16.to_int addr_u16 in
-    let op_int = Uint8.to_int op_u8 in
-    let x_int = Uint8.to_int x_u8 in
-    let y_int = Uint8.to_int y_u8 in
-    let n_int = Uint8.to_int n_u8 in
-    match op_int with
+    let op_u8, x_u8, y_u8, n_u8 = nibbles_of_uint16 instr_u16 in
+    let fst = Uint8.to_int fst_u8 in
+    let snd = Uint8.to_int snd_u8 in
+    let instr = Uint16.to_int instr_u16 in
+    let addr = Uint16.to_int addr_u16 in
+    let op = Uint8.to_int op_u8 in
+    let x = Uint8.to_int x_u8 in
+    let y = Uint8.to_int y_u8 in
+    let n = Uint8.to_int n_u8 in
+    (* reference http://devernay.free.fr/hacks/chip8/C8TECH10.HTM *)
+    match op with
     | 0x0 ->
-      (match instr_int with
-       | 0x00e0 -> state.display <- Display.init; state
-       | 0x00ee -> state.pc <- Stack.pop_exn state.stack; state
+      (match instr with
+       | 0x00e0 ->
+         state.display <- Display.init;
+         state
+       | 0x00ee ->
+         state.pc <- Stack.pop_exn state.stack;
+         state
        | _ -> err ())
-    | 0x1 -> state.pc <- addr_u16; state
+    | 0x1 ->
+      state.pc <- addr_u16;
+      state
     | 0x2 ->
       Stack.push state.stack state.pc;
       state.pc <- addr_u16;
       state
-    | 0x3 -> (
-        if (Uint8.compare state.registers.(x_int) snd_u8) = 0 then
-        (state.pc <- Uint16.(state.pc + two); state) else state
-      )
-    | 0x4 -> (
-        if (Uint8.compare state.registers.(x_int) snd_u8) <> 0 then
-        (state.pc <- Uint16.(state.pc + two); state) else state
-      )
-    | 0x5 -> (
-        if (Uint8.compare state.registers.(x_int) state.registers.(y_int)) = 0 then
-        (state.pc <- Uint16.(state.pc + two); state) else state
-      )
-    | 0x6 -> (
-        state.registers.(x_int) <- snd_u8; state
-      )
-    | 0x7 -> ()
-    | 0x8 -> ()
-    | 0x9 -> ()
-    | 0xa -> ()
-    | 0xb -> ()
-    | 0xc -> ()
-    | 0xd -> ()
-    | 0xe -> ()
-    | 0xf -> ()
+    | 0x3 ->
+      let reg_x_u8 = Registers.value state.registers ~register:x in
+      if Uint8.compare reg_x_u8 snd_u8 = 0
+      then (
+        state.pc <- Uint16.(state.pc + two);
+        state)
+      else state
+    | 0x4 ->
+      let reg_x_u8 = Registers.value state.registers ~register:x in
+      if Uint8.compare reg_x_u8 snd_u8 <> 0
+      then (
+        state.pc <- Uint16.(state.pc + two);
+        state)
+      else state
+    | 0x5 ->
+      let reg_x_u8 = Registers.value state.registers ~register:x in
+      let reg_y_u8 = Registers.value state.registers ~register:y in
+      if Uint8.compare reg_x_u8 reg_y_u8 = 0
+      then (
+        state.pc <- Uint16.(state.pc + two);
+        state)
+      else state
+    | 0x6 ->
+      Registers.update state.registers ~register:x ~value:snd_u8;
+      state
+    | 0x7 ->
+      let reg_x_u8 = Registers.value state.registers ~register:x in
+      Registers.update state.registers ~register:x ~value:Uint8.(reg_x_u8 + snd_u8);
+      state
+    | 0x8 ->
+      (match n with
+       | 0x0 ->
+         let reg_y_u8 = Registers.value state.registers ~register:y in
+         Registers.update state.registers ~register:x ~value:reg_y_u8;
+         state
+       | 0x1 ->
+         let reg_x_u8 = Registers.value state.registers ~register:x in
+         let reg_y_u8 = Registers.value state.registers ~register:y in
+         Registers.update
+           state.registers
+           ~register:x
+           ~value:Uint8.(logor reg_x_u8 reg_y_u8);
+         Registers.update state.registers ~register:0xf ~value:Uint8.zero;
+         state
+       | 0x2 ->
+         let reg_x_u8 = Registers.value state.registers ~register:x in
+         let reg_y_u8 = Registers.value state.registers ~register:y in
+         Registers.update
+           state.registers
+           ~register:x
+           ~value:Uint8.(logand reg_x_u8 reg_y_u8);
+         Registers.update state.registers ~register:0xf ~value:Uint8.zero;
+         state
+       | 0x3 ->
+         let reg_x_u8 = Registers.value state.registers ~register:x in
+         let reg_y_u8 = Registers.value state.registers ~register:y in
+         Registers.update
+           state.registers
+           ~register:x
+           ~value:Uint8.(logxor reg_x_u8 reg_y_u8);
+         Registers.update state.registers ~register:0xf ~value:Uint8.zero;
+         state
+       | 0x4 -> err ()
+       | 0x5 -> err ()
+       | 0x6 -> err ()
+       | 0x7 -> err ()
+       | 0xe -> err ()
+       | _ -> err ())
+    | 0x9 ->
+      let reg_x_u8 = Registers.value state.registers ~register:x in
+      let reg_y_u8 = Registers.value state.registers ~register:y in
+      if Uint8.compare reg_x_u8 reg_y_u8 <> 0
+      then (
+        state.pc <- Uint16.(state.pc + two);
+        state)
+      else state
+    | 0xa ->
+      state.index <- addr_u16;
+      state
+    | 0xb ->
+      let reg_0_u8 = Registers.value state.registers ~register:0 in
+      state.pc <- Uint16.(addr_u16 + of_uint8 reg_0_u8);
+      state
+    | 0xc -> err ()
+    | 0xd -> err ()
+    | 0xe -> err ()
+    | 0xf -> err ()
     | _ -> err ()
+  ;;
 end
 
 (* module Timer = struct end *)
