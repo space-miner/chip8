@@ -265,11 +265,47 @@ module Cpu = struct
            ~value:Uint8.(logxor reg_x_u8 reg_y_u8);
          Registers.update state.registers ~register:0xf ~value:Uint8.zero;
          state
-       | 0x4 -> err ()
-       | 0x5 -> err ()
-       | 0x6 -> err ()
-       | 0x7 -> err ()
-       | 0xe -> err ()
+       | 0x4 ->
+         let reg_x_u8 = Registers.value state.registers ~register:x in
+         let reg_y_u8 = Registers.value state.registers ~register:y in
+         let sum = Uint8.(reg_x_u8 + reg_y_u8) in
+         let carry =
+           if Uint8.(compare sum reg_x_u8) = -1 || Uint8.(compare sum reg_y_u8) = -1
+           then Uint8.one
+           else Uint8.zero
+         in
+         Registers.update state.registers ~register:x ~value:sum;
+         Registers.update state.registers ~register:0xf ~value:carry;
+         state
+       | 0x5 ->
+         let reg_x_u8 = Registers.value state.registers ~register:x in
+         let reg_y_u8 = Registers.value state.registers ~register:y in
+         Registers.update state.registers ~register:x ~value:Uint8.(reg_x_u8 - reg_y_u8);
+         if Uint8.compare reg_x_u8 reg_y_u8 = 1
+         then Registers.update state.registers ~register:0xf ~value:Uint8.one
+         else Registers.update state.registers ~register:0xf ~value:Uint8.zero;
+         state
+       | 0x6 ->
+         let reg_x_u8 = Registers.value state.registers ~register:x in
+         let lsb = Uint8.(logand reg_x_u8 one) in
+         Registers.update state.registers ~register:0xf ~value:lsb;
+         Registers.update state.registers ~register:x ~value:Uint8.(reg_x_u8 / of_int 2);
+         state
+       | 0x7 ->
+         let reg_x_u8 = Registers.value state.registers ~register:x in
+         let reg_y_u8 = Registers.value state.registers ~register:y in
+         Registers.update state.registers ~register:x ~value:Uint8.(reg_y_u8 - reg_x_u8);
+         if Uint8.compare reg_y_u8 reg_x_u8 = 1
+         then Registers.update state.registers ~register:0xf ~value:Uint8.one
+         else Registers.update state.registers ~register:0xf ~value:Uint8.zero;
+         state
+       | 0xe ->
+         let reg_x_u8 = Registers.value state.registers ~register:x in
+         (* jank and hacky, the compare will never be -1 and will return the correct value *think about it ;)* *)
+         let msb = Uint8.(compare (logand reg_x_u8 (of_int 0x80)) zero |> of_int) in
+         Registers.update state.registers ~register:0xf ~value:msb;
+         Registers.update state.registers ~register:x ~value:Uint8.(reg_x_u8 * of_int 2);
+         state
        | _ -> err ())
     | 0x9 ->
       let reg_x_u8 = Registers.value state.registers ~register:x in
