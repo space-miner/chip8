@@ -199,6 +199,8 @@ module Cpu = struct
     let kk = Uint8.to_int kk_u8 in
     let reg_x_u8 = Registers.value state.registers ~register:x in
     let reg_y_u8 = Registers.value state.registers ~register:y in
+    let reg_x = Uint8.to_int reg_x_u8 in
+    let reg_y = Uint8.to_int reg_y_u8 in
     print_endline
       Uint16.(
         Printf.sprintf "Processing: 0x%04x (pc=0x%04x)" (to_int instr_u16) (to_int pc_u16));
@@ -213,7 +215,6 @@ module Cpu = struct
          state
        | _ -> err ())
     | 0x1 ->
-      print_endline (Printf.sprintf "0%04x" (Uint16.to_int addr_u16));
       state.pc <- addr_u16;
       state
     | 0x2 ->
@@ -324,8 +325,8 @@ module Cpu = struct
     (* explanation on collisions in display https://austinmorlan.com/posts/chip8_emulator/#64x32-monochrome-display-memory *)
     | 0xd ->
       let index = Uint16.to_int state.index in
-      let y = y % Display.height in
-      let x = x % Display.width in
+      let y = reg_y % Display.height in
+      let x = reg_x % Display.width in
       let collision = ref false in
       for dy = 0 to n - 1 do
         let byte = Uint8.to_int state.memory.(index + dy) in
@@ -376,11 +377,10 @@ module Cpu = struct
 
   let rec run state =
     (* print_s [%sexp (state : t)]; *)
-    for i = 0 to 5 do
-      let state = step state in
-      Display.show state.display;
-      print_endline ""
-    done
+    let state = step state in
+    Display.show state.display;
+    print_endline "";
+    run state
   ;;
 end
 
