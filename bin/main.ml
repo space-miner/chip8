@@ -286,26 +286,25 @@ module Cpu = struct
          state
        | 0x5 ->
          Registers.update state.registers ~register:x ~value:Uint8.(reg_x_u8 - reg_y_u8);
-         if Uint8.compare reg_x_u8 reg_y_u8 = 1
+         if reg_x >= reg_y
          then Registers.update state.registers ~register:0xf ~value:Uint8.one
          else Registers.update state.registers ~register:0xf ~value:Uint8.zero;
          state
        | 0x6 ->
-         let lsb = Uint8.(logand reg_x_u8 one) in
+         let lsb = Uint8.of_int (reg_x land 0x01) in
+         Registers.update state.registers ~register:x ~value:(Uint8.of_int (reg_x lsr 1));
          Registers.update state.registers ~register:0xf ~value:lsb;
-         Registers.update state.registers ~register:x ~value:Uint8.(reg_x_u8 / of_int 2);
          state
        | 0x7 ->
          Registers.update state.registers ~register:x ~value:Uint8.(reg_y_u8 - reg_x_u8);
-         if Uint8.compare reg_y_u8 reg_x_u8 = 1
+         if reg_y >= reg_x
          then Registers.update state.registers ~register:0xf ~value:Uint8.one
          else Registers.update state.registers ~register:0xf ~value:Uint8.zero;
          state
        | 0xe ->
-         (* jank and hacky, the compare will never be -1 and will return the correct value *think about it ;)* *)
-         let msb = Uint8.(compare (logand reg_x_u8 (of_int 0x80)) zero |> of_int) in
+         Registers.update state.registers ~register:x ~value:(Uint8.of_int (reg_x lsl 1));
+         let msb = Uint8.of_int ((reg_x land 0x80) lsr 7) in
          Registers.update state.registers ~register:0xf ~value:msb;
-         Registers.update state.registers ~register:x ~value:Uint8.(reg_x_u8 * of_int 2);
          state
        | _ -> err ())
     | 0x9 ->
@@ -377,23 +376,23 @@ module Cpu = struct
        | 0x33 ->
          let index = Uint16.to_int state.index in
          let ones = reg_x % 10 in
-         let tens = (reg_x / 10) % 10 in
-         let hundreds = (reg_x / 100) in
-         let bcd_array = [|hundreds;tens;ones|] |> Array.map ~f:Uint8.of_int in
+         let tens = reg_x / 10 % 10 in
+         let hundreds = reg_x / 100 in
+         let bcd_array = [| hundreds; tens; ones |] |> Array.map ~f:Uint8.of_int in
          Array.blit ~src:bcd_array ~src_pos:0 ~dst:state.memory ~dst_pos:index ~len:3;
          state
        | 0x55 ->
          for i = 0 to x do
            let index = Uint16.to_int state.index in
            let reg_i_u8 = Registers.value state.registers ~register:i in
-           Memory.update state.memory ~index:(index+i) ~value: reg_i_u8;
+           Memory.update state.memory ~index:(index + i) ~value:reg_i_u8
          done;
          state
        | 0x65 ->
          for i = 0 to x do
            let index = Uint16.to_int state.index in
-           let memory_i_u8 = Memory.value state.memory ~index:(index+i) in
-           Registers.update state.registers ~register:i ~value:memory_i_u8;
+           let memory_i_u8 = Memory.value state.memory ~index:(index + i) in
+           Registers.update state.registers ~register:i ~value:memory_i_u8
          done;
          state
        | _ -> err ())
@@ -419,7 +418,7 @@ let read_rom path : Uint8.t array =
 
 let () =
   print_endline "Hello, World!";
-  let rom = read_rom "./roms/3-corax+.ch8" in
+  let rom = read_rom "./roms/4-flags.ch8" in
   let memory = Memory.load ~rom ~memory:Memory.init in
   (* same here, it's not happy with type Memory.t *)
   print_s [%sexp (memory : Uint8.t array)];
