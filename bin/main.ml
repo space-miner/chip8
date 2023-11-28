@@ -105,14 +105,24 @@ module Registers = struct
 end
 
 module Display = struct
+  (* type t = Uint8.t array array [@@deriving sexp] *)
   type t = bool array array [@@deriving sexp]
 
   let width = 64
   let height = 32
-  let init = Array.make_matrix ~dimx:width ~dimy:height false
+
+  (* let init = Array.make_matrix ~dimx:height ~dimy:width Uint8.zero *)
+  let init = Array.make_matrix ~dimx:height ~dimy:width false
+  let value t ~row ~col = t.(row).(col)
+
+  let update t ~row ~col ~value =
+    if 0 <= row && row < height && 0 <= col && col < width then t.(row).(col) <- value
+  ;;
 
   let show display =
-    let pixel_of_bool b = if b then "@" else " " in
+    (* let pixel_of_uint8 u8 = if Uint8.(to_int u8 = 1) then "@" else "." in *)
+    (* let row_to_string r = Array.fold r ~init:"" ~f:(fun acc u8 -> acc ^ pixel_of_uint8 u8) in *)
+    let pixel_of_bool b = if b then "@" else "." in
     let row_to_string r = Array.fold r ~init:"" ~f:(fun acc b -> acc ^ pixel_of_bool b) in
     let display_to_string d =
       Array.map d ~f:(fun r -> row_to_string r)
@@ -189,6 +199,9 @@ module Cpu = struct
     let kk = Uint8.to_int kk_u8 in
     let reg_x_u8 = Registers.value state.registers ~register:x in
     let reg_y_u8 = Registers.value state.registers ~register:y in
+    print_endline
+      Uint16.(
+        Printf.sprintf "Processing: 0x%04x (pc=0x%04x)" (to_int instr_u16) (to_int pc_u16));
     match op with
     | 0x0 ->
       (match instr with
@@ -200,6 +213,7 @@ module Cpu = struct
          state
        | _ -> err ())
     | 0x1 ->
+      print_endline (Printf.sprintf "0%04x" (Uint16.to_int addr_u16));
       state.pc <- addr_u16;
       state
     | 0x2 ->
@@ -307,7 +321,31 @@ module Cpu = struct
       let rand_u8 = Random.int 256 |> Uint8.of_int in
       Registers.update state.registers ~register:x ~value:Uint8.(logand rand_u8 kk_u8);
       state
-    | 0xd -> err ()
+    (* explanation on collisions in display https://austinmorlan.com/posts/chip8_emulator/#64x32-monochrome-display-memory *)
+    | 0xd ->
+      let index = Uint16.to_int state.index in
+      let y = y % Display.height in
+      let x = x % Display.width in
+      let collision = ref false in
+      for dy = 0 to n - 1 do
+        let byte = Uint8.to_int state.memory.(index + dy) in
+        for dx = 0 to 7 do
+          let row = y + dy in
+          let col = x + dx in
+          if 0 <= row && row < Display.height && 0 <= col && col < Display.width
+          then (
+            let sprite_pixel = byte land (0x80 lsr dx) <> 0 in
+            let screen_pixel = Display.value state.display ~row ~col in
+            let flip_pixel = Bool.(sprite_pixel <> screen_pixel) in
+            collision := !collision || sprite_pixel;
+            Display.update state.display ~row ~col ~value:flip_pixel)
+        done
+      done;
+      Registers.update
+        state.registers
+        ~register:0xf
+        ~value:(if !collision then Uint8.one else Uint8.zero);
+      state
     | 0xe ->
       (match kk with
        | 0x9e -> err ()
@@ -337,9 +375,12 @@ module Cpu = struct
   ;;
 
   let rec run state =
-    print_s [%sexp (state : t)];
-    let state = step state in
-    run state
+    (* print_s [%sexp (state : t)]; *)
+    for i = 0 to 5 do
+      let state = step state in
+      Display.show state.display;
+      print_endline ""
+    done
   ;;
 end
 
@@ -353,7 +394,7 @@ let read_rom path : Uint8.t array =
 
 let () =
   print_endline "Hello, World!";
-  let rom = read_rom "./roms/pong.rom" in
+  let rom = read_rom "./roms/1-chip8-logo.ch8" in
   let memory = Memory.load ~rom ~memory:Memory.init in
   (* same here, it's not happy with type Memory.t *)
   print_s [%sexp (memory : Uint8.t array)];
