@@ -79,8 +79,8 @@ module Memory = struct
     memory
   ;;
 
-  let value t ~index = t.(index)
-  let update t ~index ~value = t.(index) <- value
+  let get t ~index = t.(index)
+  let set t ~index ~value = t.(index) <- value
 
   let sexp_of_t memory : Sexp.t =
     Array.fold memory ~init:[] ~f:(fun acc cell ->
@@ -103,8 +103,8 @@ module Registers = struct
   type t = Uint8.t array [@@deriving sexp]
 
   let init = Array.create ~len:16 Uint8.zero
-  let value t ~register = t.(register)
-  let update t ~register ~value = t.(register) <- value
+  let get t ~register = t.(register)
+  let set t ~register ~value = t.(register) <- value
 end
 
 module Display = struct
@@ -116,9 +116,9 @@ module Display = struct
 
   (* let init = Array.make_matrix ~dimx:height ~dimy:width Uint8.zero *)
   let init = Array.make_matrix ~dimx:height ~dimy:width false
-  let value t ~row ~col = t.(row).(col)
+  let get t ~row ~col = t.(row).(col)
 
-  let update t ~row ~col ~value =
+  let set t ~row ~col ~value =
     if 0 <= row && row < height && 0 <= col && col < width then t.(row).(col) <- value
   ;;
 
@@ -146,6 +146,7 @@ module Cpu = struct
     ; mutable display : Display.t
     ; mutable delay_timer : Uint8.t
     ; mutable sound_timer : Uint8.t
+    ; mutable keypad : Uint8.t option
     }
   [@@deriving fields, sexp]
 
@@ -158,6 +159,7 @@ module Cpu = struct
     ; display = Display.init
     ; delay_timer = Uint8.zero
     ; sound_timer = Uint8.zero
+    ; keypad = None
     }
   ;;
 
@@ -176,8 +178,39 @@ module Cpu = struct
     fst_nibble, snd_nibble, thrd_nibble, frth_nibble
   ;;
 
+  let rec process_event state =
+    let event = Sdl.Event.create () in
+    if Sdl.poll_event (Some event)
+    then (
+      match Sdl.Event.(get event typ |> enum) with
+      | `Key_down ->
+        (match Sdl.Event.(get event keyboard_scancode) |> Sdl.Scancode.enum with
+         | `K1 -> state.keypad <- Some (Uint8.of_int 0x1)
+         | `K2 -> state.keypad <- Some (Uint8.of_int 0x2)
+         | `K3 -> state.keypad <- Some (Uint8.of_int 0x3)
+         | `K4 -> state.keypad <- Some (Uint8.of_int 0xc)
+         | `Q -> state.keypad <- Some (Uint8.of_int 0x4)
+         | `W -> state.keypad <- Some (Uint8.of_int 0x5)
+         | `E -> state.keypad <- Some (Uint8.of_int 0x6)
+         | `R -> state.keypad <- Some (Uint8.of_int 0xd)
+         | `A -> state.keypad <- Some (Uint8.of_int 0x7)
+         | `S -> state.keypad <- Some (Uint8.of_int 0x8)
+         | `D -> state.keypad <- Some (Uint8.of_int 0x9)
+         | `F -> state.keypad <- Some (Uint8.of_int 0xe)
+         | `Z -> state.keypad <- Some (Uint8.of_int 0xa)
+         | `X -> state.keypad <- Some (Uint8.of_int 0x0)
+         | `C -> state.keypad <- Some (Uint8.of_int 0xb)
+         | `V -> state.keypad <- Some (Uint8.of_int 0xf)
+         | `Escape -> Caml.exit 0
+         | _ -> ())
+      | `Key_up -> state.keypad <- None
+      | `Quit -> Caml.exit 0
+      | _ -> ())
+  ;;
+
   let step (state : t) : t =
     (* cowgod reference http://devernay.free.fr/hacks/chip8/C8TECH10.HTM *)
+    process_event state;
     let pc_u16 = state.pc in
     let pc_int = Uint16.to_int pc_u16 in
     let kk_u8 = Memory.read_uint8 ~memory:state.memory ~index:(pc_int + 1) in
@@ -190,7 +223,7 @@ module Cpu = struct
            (Uint16.to_int instr_u16)
            (Uint16.to_int pc_u16))
     in
-    (* update pc to next instruction *)
+    (* set pc to next instruction *)
     state.pc <- Uint16.(state.pc + of_int 2);
     let op_u8, x_u8, y_u8, n_u8 = nibbles_of_uint16 instr_u16 in
     let instr = Uint16.to_int instr_u16 in
@@ -200,8 +233,8 @@ module Cpu = struct
     let y = Uint8.to_int y_u8 in
     let n = Uint8.to_int n_u8 in
     let kk = Uint8.to_int kk_u8 in
-    let reg_x_u8 = Registers.value state.registers ~register:x in
-    let reg_y_u8 = Registers.value state.registers ~register:y in
+    let reg_x_u8 = Registers.get state.registers ~register:x in
+    let reg_y_u8 = Registers.get state.registers ~register:y in
     let reg_x = Uint8.to_int reg_x_u8 in
     let reg_y = Uint8.to_int reg_y_u8 in
     print_endline
@@ -225,54 +258,36 @@ module Cpu = struct
       state.pc <- addr_u16;
       state
     | 0x3 ->
-      if Uint8.compare reg_x_u8 kk_u8 = 0
-      then (
-        state.pc <- Uint16.(state.pc + of_int 2);
-        state)
-      else state
+      if Uint8.compare reg_x_u8 kk_u8 = 0 then state.pc <- Uint16.(state.pc + of_int 2);
+      state
     | 0x4 ->
-      if Uint8.compare reg_x_u8 kk_u8 <> 0
-      then (
-        state.pc <- Uint16.(state.pc + of_int 2);
-        state)
-      else state
+      if Uint8.compare reg_x_u8 kk_u8 <> 0 then state.pc <- Uint16.(state.pc + of_int 2);
+      state
     | 0x5 ->
-      if Uint8.compare reg_x_u8 reg_y_u8 = 0
-      then (
-        state.pc <- Uint16.(state.pc + of_int 2);
-        state)
-      else state
+      if Uint8.compare reg_x_u8 reg_y_u8 = 0 then state.pc <- Uint16.(state.pc + of_int 2);
+      state
     | 0x6 ->
-      Registers.update state.registers ~register:x ~value:kk_u8;
+      Registers.set state.registers ~register:x ~value:kk_u8;
       state
     | 0x7 ->
-      Registers.update state.registers ~register:x ~value:Uint8.(reg_x_u8 + kk_u8);
+      Registers.set state.registers ~register:x ~value:Uint8.(reg_x_u8 + kk_u8);
       state
     | 0x8 ->
       (match n with
        | 0x0 ->
-         Registers.update state.registers ~register:x ~value:reg_y_u8;
+         Registers.set state.registers ~register:x ~value:reg_y_u8;
          state
        | 0x1 ->
-         Registers.update
-           state.registers
-           ~register:x
-           ~value:Uint8.(logor reg_x_u8 reg_y_u8);
-         Registers.update state.registers ~register:0xf ~value:Uint8.zero;
+         Registers.set state.registers ~register:x ~value:Uint8.(logor reg_x_u8 reg_y_u8);
+         Registers.set state.registers ~register:0xf ~value:Uint8.zero;
          state
        | 0x2 ->
-         Registers.update
-           state.registers
-           ~register:x
-           ~value:Uint8.(logand reg_x_u8 reg_y_u8);
-         Registers.update state.registers ~register:0xf ~value:Uint8.zero;
+         Registers.set state.registers ~register:x ~value:Uint8.(logand reg_x_u8 reg_y_u8);
+         Registers.set state.registers ~register:0xf ~value:Uint8.zero;
          state
        | 0x3 ->
-         Registers.update
-           state.registers
-           ~register:x
-           ~value:Uint8.(logxor reg_x_u8 reg_y_u8);
-         Registers.update state.registers ~register:0xf ~value:Uint8.zero;
+         Registers.set state.registers ~register:x ~value:Uint8.(logxor reg_x_u8 reg_y_u8);
+         Registers.set state.registers ~register:0xf ~value:Uint8.zero;
          state
        | 0x4 ->
          let sum = Uint8.(reg_x_u8 + reg_y_u8) in
@@ -281,48 +296,46 @@ module Cpu = struct
            then Uint8.one
            else Uint8.zero
          in
-         Registers.update state.registers ~register:x ~value:sum;
-         Registers.update state.registers ~register:0xf ~value:carry;
+         Registers.set state.registers ~register:x ~value:sum;
+         Registers.set state.registers ~register:0xf ~value:carry;
          state
        | 0x5 ->
-         Registers.update state.registers ~register:x ~value:Uint8.(reg_x_u8 - reg_y_u8);
+         Registers.set state.registers ~register:x ~value:Uint8.(reg_x_u8 - reg_y_u8);
          if reg_x >= reg_y
-         then Registers.update state.registers ~register:0xf ~value:Uint8.one
-         else Registers.update state.registers ~register:0xf ~value:Uint8.zero;
+         then Registers.set state.registers ~register:0xf ~value:Uint8.one
+         else Registers.set state.registers ~register:0xf ~value:Uint8.zero;
          state
        | 0x6 ->
          let lsb = Uint8.of_int (reg_x land 0x01) in
-         Registers.update state.registers ~register:x ~value:(Uint8.of_int (reg_x lsr 1));
-         Registers.update state.registers ~register:0xf ~value:lsb;
+         Registers.set state.registers ~register:x ~value:(Uint8.of_int (reg_x lsr 1));
+         Registers.set state.registers ~register:0xf ~value:lsb;
          state
        | 0x7 ->
-         Registers.update state.registers ~register:x ~value:Uint8.(reg_y_u8 - reg_x_u8);
+         Registers.set state.registers ~register:x ~value:Uint8.(reg_y_u8 - reg_x_u8);
          if reg_y >= reg_x
-         then Registers.update state.registers ~register:0xf ~value:Uint8.one
-         else Registers.update state.registers ~register:0xf ~value:Uint8.zero;
+         then Registers.set state.registers ~register:0xf ~value:Uint8.one
+         else Registers.set state.registers ~register:0xf ~value:Uint8.zero;
          state
        | 0xe ->
-         Registers.update state.registers ~register:x ~value:(Uint8.of_int (reg_x lsl 1));
+         Registers.set state.registers ~register:x ~value:(Uint8.of_int (reg_x lsl 1));
          let msb = Uint8.of_int ((reg_x land 0x80) lsr 7) in
-         Registers.update state.registers ~register:0xf ~value:msb;
+         Registers.set state.registers ~register:0xf ~value:msb;
          state
        | _ -> err ())
     | 0x9 ->
       if Uint8.compare reg_x_u8 reg_y_u8 <> 0
-      then (
-        state.pc <- Uint16.(state.pc + of_int 2);
-        state)
-      else state
+      then state.pc <- Uint16.(state.pc + of_int 2);
+      state
     | 0xa ->
       state.index <- addr_u16;
       state
     | 0xb ->
-      let reg_0_u8 = Registers.value state.registers ~register:0 in
+      let reg_0_u8 = Registers.get state.registers ~register:0 in
       state.pc <- Uint16.(addr_u16 + of_uint8 reg_0_u8);
       state
     | 0xc ->
       let rand_u8 = Random.int 256 |> Uint8.of_int in
-      Registers.update state.registers ~register:x ~value:Uint8.(logand rand_u8 kk_u8);
+      Registers.set state.registers ~register:x ~value:Uint8.(logand rand_u8 kk_u8);
       state
     (* explanation on collisions in display https://austinmorlan.com/posts/chip8_emulator/#64x32-monochrome-display-memory *)
     | 0xd ->
@@ -338,13 +351,13 @@ module Cpu = struct
           if 0 <= row && row < Display.height && 0 <= col && col < Display.width
           then (
             let sprite_pixel = byte land (0x80 lsr dx) <> 0 in
-            let screen_pixel = Display.value state.display ~row ~col in
+            let screen_pixel = Display.get state.display ~row ~col in
             let flip_pixel = Bool.(sprite_pixel <> screen_pixel) in
             collision := !collision || sprite_pixel;
-            Display.update state.display ~row ~col ~value:flip_pixel)
+            Display.set state.display ~row ~col ~value:flip_pixel)
         done
       done;
-      Registers.update
+      Registers.set
         state.registers
         ~register:0xf
         ~value:(if !collision then Uint8.one else Uint8.zero);
@@ -357,7 +370,7 @@ module Cpu = struct
     | 0xf ->
       (match kk with
        | 0x07 ->
-         Registers.update state.registers ~register:x ~value:state.delay_timer;
+         Registers.set state.registers ~register:x ~value:state.delay_timer;
          state
        | 0x0a -> err ()
        | 0x15 ->
@@ -384,19 +397,19 @@ module Cpu = struct
        | 0x55 ->
          for i = 0 to x do
            let index = Uint16.to_int state.index in
-           let reg_i_u8 = Registers.value state.registers ~register:i in
-           Memory.update state.memory ~index:(index + i) ~value:reg_i_u8
+           let reg_i_u8 = Registers.get state.registers ~register:i in
+           Memory.set state.memory ~index:(index + i) ~value:reg_i_u8
          done;
          state
        | 0x65 ->
          for i = 0 to x do
            let index = Uint16.to_int state.index in
-           let memory_i_u8 = Memory.value state.memory ~index:(index + i) in
-           Registers.update state.registers ~register:i ~value:memory_i_u8
+           let memory_i_u8 = Memory.get state.memory ~index:(index + i) in
+           Registers.set state.registers ~register:i ~value:memory_i_u8
          done;
          state
        | _ -> err ())
-    | _ -> err ()
+    | _ -> err ();
   ;;
 
   let rec run state =
@@ -409,16 +422,14 @@ module Cpu = struct
 end
 
 (* module Timer = struct end *)
-(* module Keypad = struct end *)
 
-let read_rom path : Uint8.t array =
-  let bytes = In_channel.read_all path in
+let read_rom () : Uint8.t array =
+  let bytes = In_channel.input_all In_channel.stdin in
   String.to_array bytes |> Array.map ~f:(fun ch -> ch |> Char.to_int |> Uint8.of_int)
 ;;
 
 let () =
-  print_endline "Hello, World!";
-  let rom = read_rom "./roms/4-flags.ch8" in
+  let rom = read_rom () in
   let memory = Memory.load ~rom ~memory:Memory.init in
   (* same here, it's not happy with type Memory.t *)
   print_s [%sexp (memory : Uint8.t array)];
