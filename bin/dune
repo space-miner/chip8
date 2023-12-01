@@ -3,6 +3,6 @@
  (name main)
  (flags
   (-w -32))
- (libraries chip8 base stdio stdint tsdl)
+ (libraries chip8 base stdio tsdl)
  (preprocess
   (pps ppx_jane ppx_sexp_conv ppx_compare)))

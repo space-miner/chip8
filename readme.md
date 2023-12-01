@@ -20,11 +20,10 @@ chip8 is a fantasy console created by joe weisbecker in the 70s. originally deve
 * input: support for handling keyboard input.
 
 ### todo
-* handle keypad inputs
-  * test roms #5 #6 #8 
-* refactor to not depend on stdint 
-* consider moving opcode functions out of step
-* move some modules into lib
-* test on other chip8 roms -- e.g. pong
-* add beeps and test on rom #7
+- [ ] handle keypad inputs and test roms #5 #6
+- [x] refactor to not depend on stdint 
+- [ ] consider moving opcode functions out of step
+- [ ] move some modules into lib
+- [ ] test on other chip8 roms -- e.g. pong
+- [ ] add beeps and test on rom #7
 

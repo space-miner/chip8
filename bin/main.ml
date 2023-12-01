@@ -1,33 +1,7 @@
 open Base
 open Stdio
-open Stdint
 open Tsdl
 
-module Uint8 = struct
-  include Uint8
-
-  let sexp_of_t u8 = Sexp.Atom (Uint8.to_int u8 |> Printf.sprintf "0x%02x")
-
-  let t_of_sexp sexp =
-    match sexp with
-    | Sexp.Atom s -> of_string s
-    | _ -> failwith "invalid sexp"
-  ;;
-end
-
-module Uint16 = struct
-  include Uint16
-
-  let sexp_of_t u16 = Sexp.Atom (Uint16.to_int u16 |> Printf.sprintf "0%04x")
-
-  let t_of_sexp sexp =
-    match sexp with
-    | Sexp.Atom s -> of_string s
-    | _ -> failwith "invalid sexp"
-  ;;
-end
-
-(* loosely following this guide https://tobiasvl.github.io/blog/write-a-chip-8-emulator/ *)
 module Font = struct
   let digits =
     [| [| 0xf0; 0x90; 0x90; 0x90; 0xf0 |] (* 0 *)
@@ -47,19 +21,19 @@ module Font = struct
      ; [| 0xf0; 0x80; 0xf0; 0x80; 0xf0 |] (* e *)
      ; [| 0xf0; 0x80; 0xf0; 0x80; 0x80 |] (* f *)
     |]
-    |> Array.map ~f:(Array.map ~f:Uint8.of_int)
   ;;
-  (* converts to uint8 *)
 end
 
 module Memory = struct
-  type t = Uint8.t array [@@deriving sexp]
+  (* memory_value are uint8 *)
+  type memory_value = int [@@deriving sexp]
+  type t = memory_value array [@@deriving sexp]
 
   let size = 4 * 1024
   let rom_start = 0x0200
 
   let init =
-    let memory = Array.init size ~f:(Fn.const Uint8.zero) in
+    let memory = Array.init size ~f:(Fn.const 0) in
     let digits_flatten =
       Array.fold Font.digits ~init:[||] ~f:(fun acc digit -> Array.append acc digit)
     in
@@ -73,14 +47,19 @@ module Memory = struct
     memory
   ;;
 
+  (* splice rom into memory at 0x0200 *)
   let load ~rom ~memory : t =
-    (* splice rom into memory at 0x0200 *)
     Array.blit ~src:rom ~src_pos:0 ~dst:memory ~dst_pos:rom_start ~len:(Array.length rom);
     memory
   ;;
 
-  let get t ~index = t.(index)
-  let set t ~index ~value = t.(index) <- value
+  let read_byte ~memory ~index = memory.(index)
+
+  let read_instruction ~memory ~index =
+    let first_byte = read_byte ~memory ~index in
+    let second_byte = read_byte ~memory ~index:(index + 1) in
+    (first_byte lsl 8) + second_byte
+  ;;
 
   let sexp_of_t memory : Sexp.t =
     Array.fold memory ~init:[] ~f:(fun acc cell ->
@@ -89,44 +68,33 @@ module Memory = struct
     |> Sexp.List
   ;;
 
-  (* read byte *)
-  let read_uint8 ~memory ~index = memory.(index)
-
-  let read_uint16 ~memory ~index =
-    let fst_u8 = read_uint8 ~memory ~index in
-    let snd_u8 = read_uint8 ~memory ~index:(index + 1) in
-    (Uint8.to_int fst_u8 lsl 8) + Uint8.to_int snd_u8 |> Uint16.of_int
-  ;;
+  let get t ~index = t.(index)
+  let set t ~index ~value = t.(index) <- value
 end
 
 module Registers = struct
-  type t = Uint8.t array [@@deriving sexp]
+  (* register_value are uint8 *)
+  type register_value = int [@@deriving sexp]
+  type t = register_value array [@@deriving sexp]
 
-  let init = Array.create ~len:16 Uint8.zero
+  let init = Array.create ~len:16 0
   let get t ~register = t.(register)
   let set t ~register ~value = t.(register) <- value
 end
 
 module Display = struct
-  (* type t = Uint8.t array array [@@deriving sexp] *)
-  type t = bool array array [@@deriving sexp]
+  type pixel = bool [@@deriving sexp]
+  type t = pixel array array [@@deriving sexp]
 
   let width = 64
   let height = 32
-
-  (* let init = Array.make_matrix ~dimx:height ~dimy:width Uint8.zero *)
   let init = Array.make_matrix ~dimx:height ~dimy:width false
-  let get t ~row ~col = t.(row).(col)
-
-  let set t ~row ~col ~value =
-    if 0 <= row && row < height && 0 <= col && col < width then t.(row).(col) <- value
-  ;;
 
   let show display =
-    (* let pixel_of_uint8 u8 = if Uint8.(to_int u8 = 1) then "@" else "." in *)
-    (* let row_to_string r = Array.fold r ~init:"" ~f:(fun acc u8 -> acc ^ pixel_of_uint8 u8) in *)
-    let pixel_of_bool b = if b then "@" else " " in
-    let row_to_string r = Array.fold r ~init:"" ~f:(fun acc b -> acc ^ pixel_of_bool b) in
+    let pixel_to_string p = if p then "@" else " " in
+    let row_to_string r =
+      Array.fold r ~init:"" ~f:(fun acc p -> acc ^ pixel_to_string p)
+    in
     let display_to_string d =
       Array.map d ~f:(fun r -> row_to_string r)
       |> Array.to_list
@@ -134,48 +102,53 @@ module Display = struct
     in
     print_endline (display_to_string display)
   ;;
+
+  let get t ~row ~col = t.(row).(col)
+
+  let set t ~row ~col ~value =
+    if 0 <= row && row < height && 0 <= col && col < width then t.(row).(col) <- value
+  ;;
 end
 
 module Cpu = struct
   type t =
-    { mutable pc : Uint16.t
-    ; mutable index : Uint16.t
-    ; mutable stack : Uint16.t Stack.t
+    { mutable pc : int (* u16 *)
+    ; mutable index : int (* u16 *)
+    ; mutable stack : int Stack.t (* u16 stack *)
     ; mutable registers : Registers.t
-    ; mutable memory : Uint8.t array (* idk why it's not happy with type Memory.t *)
-    ; mutable display : Display.t
-    ; mutable delay_timer : Uint8.t
-    ; mutable sound_timer : Uint8.t
-    ; mutable keypad : Uint8.t option
+    ; mutable memory : Memory.t (* u8 array *)
+    ; mutable display : Display.t (* bool array array *)
+    ; mutable delay_timer : int (* u8 *)
+    ; mutable sound_timer : int (* u8 *)
+    ; mutable keypad : int option (* u8 option) *)
     }
   [@@deriving fields, sexp]
 
   let init ~rom : t =
-    { pc = Uint16.of_int Memory.rom_start
-    ; index = Uint16.zero
+    { pc = Memory.rom_start
+    ; index = 0
     ; stack = Stack.create ()
     ; registers = Registers.init
     ; memory = Memory.load ~rom ~memory:Memory.init
     ; display = Display.init
-    ; delay_timer = Uint8.zero
-    ; sound_timer = Uint8.zero
+    ; delay_timer = 0
+    ; sound_timer = 0
     ; keypad = None
     }
   ;;
 
-  (* utils *)
-  let nibbles_of_uint8 u8 =
-    let fst_nibble = Uint8.(shift_right (logand u8 (of_int 0xf0)) 4) in
-    let snd_nibble = Uint8.(logand u8 (of_int 0x0f)) in
-    fst_nibble, snd_nibble
+  let nibbles_of_byte byte =
+    let first_nibble = (byte land 0xf0) lsr 4 in
+    let second_nibble = byte land 0x0f in
+    first_nibble, second_nibble
   ;;
 
-  let nibbles_of_uint16 u16 =
-    let fst_u8 = Uint16.(shift_right u16 8 |> to_uint8) in
-    let snd_u8 = Uint16.(logand u16 (of_int 0x00ff) |> to_uint8) in
-    let fst_nibble, snd_nibble = nibbles_of_uint8 fst_u8 in
-    let thrd_nibble, frth_nibble = nibbles_of_uint8 snd_u8 in
-    fst_nibble, snd_nibble, thrd_nibble, frth_nibble
+  let nibbles_of_instruction instruction =
+    let first_byte = instruction lsr 8 in
+    let second_byte = instruction land 0x00ff in
+    let first_nibble, second_nibble = nibbles_of_byte first_byte in
+    let third_nibble, fourth_nibble = nibbles_of_byte second_byte in
+    first_nibble, second_nibble, third_nibble, fourth_nibble
   ;;
 
   let rec process_event state =
@@ -185,22 +158,22 @@ module Cpu = struct
       match Sdl.Event.(get event typ |> enum) with
       | `Key_down ->
         (match Sdl.Event.(get event keyboard_scancode) |> Sdl.Scancode.enum with
-         | `K1 -> state.keypad <- Some (Uint8.of_int 0x1)
-         | `K2 -> state.keypad <- Some (Uint8.of_int 0x2)
-         | `K3 -> state.keypad <- Some (Uint8.of_int 0x3)
-         | `K4 -> state.keypad <- Some (Uint8.of_int 0xc)
-         | `Q -> state.keypad <- Some (Uint8.of_int 0x4)
-         | `W -> state.keypad <- Some (Uint8.of_int 0x5)
-         | `E -> state.keypad <- Some (Uint8.of_int 0x6)
-         | `R -> state.keypad <- Some (Uint8.of_int 0xd)
-         | `A -> state.keypad <- Some (Uint8.of_int 0x7)
-         | `S -> state.keypad <- Some (Uint8.of_int 0x8)
-         | `D -> state.keypad <- Some (Uint8.of_int 0x9)
-         | `F -> state.keypad <- Some (Uint8.of_int 0xe)
-         | `Z -> state.keypad <- Some (Uint8.of_int 0xa)
-         | `X -> state.keypad <- Some (Uint8.of_int 0x0)
-         | `C -> state.keypad <- Some (Uint8.of_int 0xb)
-         | `V -> state.keypad <- Some (Uint8.of_int 0xf)
+         | `K1 -> state.keypad <- Some 0x1
+         | `K2 -> state.keypad <- Some 0x2
+         | `K3 -> state.keypad <- Some 0x3
+         | `K4 -> state.keypad <- Some 0xc
+         | `Q -> state.keypad <- Some 0x4
+         | `W -> state.keypad <- Some 0x5
+         | `E -> state.keypad <- Some 0x6
+         | `R -> state.keypad <- Some 0xd
+         | `A -> state.keypad <- Some 0x7
+         | `S -> state.keypad <- Some 0x8
+         | `D -> state.keypad <- Some 0x9
+         | `F -> state.keypad <- Some 0xe
+         | `Z -> state.keypad <- Some 0xa
+         | `X -> state.keypad <- Some 0x0
+         | `C -> state.keypad <- Some 0xb
+         | `V -> state.keypad <- Some 0xf
          | `Escape -> Caml.exit 0
          | _ -> ())
       | `Key_up -> state.keypad <- None
@@ -208,212 +181,135 @@ module Cpu = struct
       | _ -> ())
   ;;
 
-  let step (state : t) : t =
-    (* cowgod reference http://devernay.free.fr/hacks/chip8/C8TECH10.HTM *)
-    process_event state;
-    let pc_u16 = state.pc in
-    let pc_int = Uint16.to_int pc_u16 in
-    let kk_u8 = Memory.read_uint8 ~memory:state.memory ~index:(pc_int + 1) in
-    let instr_u16 = Memory.read_uint16 ~memory:state.memory ~index:pc_int in
-    let addr_u16 = Uint16.(logand instr_u16 (of_int 0x0FFF)) in
-    let err () =
-      failwith
-        (Printf.sprintf
-           "unimplemented: 0x%04x (pc=0x%04x)"
-           (Uint16.to_int instr_u16)
-           (Uint16.to_int pc_u16))
-    in
-    (* set pc to next instruction *)
-    state.pc <- Uint16.(state.pc + of_int 2);
-    let op_u8, x_u8, y_u8, n_u8 = nibbles_of_uint16 instr_u16 in
-    let instr = Uint16.to_int instr_u16 in
-    (* referred to as nnn in the cowgod reference docs *)
-    let op = Uint8.to_int op_u8 in
-    let x = Uint8.to_int x_u8 in
-    let y = Uint8.to_int y_u8 in
-    let n = Uint8.to_int n_u8 in
-    let kk = Uint8.to_int kk_u8 in
-    let reg_x_u8 = Registers.get state.registers ~register:x in
-    let reg_y_u8 = Registers.get state.registers ~register:y in
-    let reg_x = Uint8.to_int reg_x_u8 in
-    let reg_y = Uint8.to_int reg_y_u8 in
-    print_endline
-      Uint16.(
-        Printf.sprintf "Processing: 0x%04x (pc=0x%04x)" (to_int instr_u16) (to_int pc_u16));
-    match op with
-    | 0x0 ->
-      (match instr with
-       | 0x00e0 ->
-         state.display <- Display.init;
-         state
-       | 0x00ee ->
-         state.pc <- Stack.pop_exn state.stack;
-         state
-       | _ -> err ())
-    | 0x1 ->
-      state.pc <- addr_u16;
-      state
-    | 0x2 ->
-      Stack.push state.stack state.pc;
-      state.pc <- addr_u16;
-      state
-    | 0x3 ->
-      if Uint8.compare reg_x_u8 kk_u8 = 0 then state.pc <- Uint16.(state.pc + of_int 2);
-      state
-    | 0x4 ->
-      if Uint8.compare reg_x_u8 kk_u8 <> 0 then state.pc <- Uint16.(state.pc + of_int 2);
-      state
-    | 0x5 ->
-      if Uint8.compare reg_x_u8 reg_y_u8 = 0 then state.pc <- Uint16.(state.pc + of_int 2);
-      state
-    | 0x6 ->
-      Registers.set state.registers ~register:x ~value:kk_u8;
-      state
-    | 0x7 ->
-      Registers.set state.registers ~register:x ~value:Uint8.(reg_x_u8 + kk_u8);
-      state
-    | 0x8 ->
-      (match n with
-       | 0x0 ->
-         Registers.set state.registers ~register:x ~value:reg_y_u8;
-         state
-       | 0x1 ->
-         Registers.set state.registers ~register:x ~value:Uint8.(logor reg_x_u8 reg_y_u8);
-         Registers.set state.registers ~register:0xf ~value:Uint8.zero;
-         state
-       | 0x2 ->
-         Registers.set state.registers ~register:x ~value:Uint8.(logand reg_x_u8 reg_y_u8);
-         Registers.set state.registers ~register:0xf ~value:Uint8.zero;
-         state
-       | 0x3 ->
-         Registers.set state.registers ~register:x ~value:Uint8.(logxor reg_x_u8 reg_y_u8);
-         Registers.set state.registers ~register:0xf ~value:Uint8.zero;
-         state
-       | 0x4 ->
-         let sum = Uint8.(reg_x_u8 + reg_y_u8) in
-         let carry =
-           if Uint8.(compare sum reg_x_u8) = -1 || Uint8.(compare sum reg_y_u8) = -1
-           then Uint8.one
-           else Uint8.zero
-         in
-         Registers.set state.registers ~register:x ~value:sum;
-         Registers.set state.registers ~register:0xf ~value:carry;
-         state
-       | 0x5 ->
-         Registers.set state.registers ~register:x ~value:Uint8.(reg_x_u8 - reg_y_u8);
-         if reg_x >= reg_y
-         then Registers.set state.registers ~register:0xf ~value:Uint8.one
-         else Registers.set state.registers ~register:0xf ~value:Uint8.zero;
-         state
-       | 0x6 ->
-         let lsb = Uint8.of_int (reg_x land 0x01) in
-         Registers.set state.registers ~register:x ~value:(Uint8.of_int (reg_x lsr 1));
-         Registers.set state.registers ~register:0xf ~value:lsb;
-         state
-       | 0x7 ->
-         Registers.set state.registers ~register:x ~value:Uint8.(reg_y_u8 - reg_x_u8);
-         if reg_y >= reg_x
-         then Registers.set state.registers ~register:0xf ~value:Uint8.one
-         else Registers.set state.registers ~register:0xf ~value:Uint8.zero;
-         state
-       | 0xe ->
-         Registers.set state.registers ~register:x ~value:(Uint8.of_int (reg_x lsl 1));
-         let msb = Uint8.of_int ((reg_x land 0x80) lsr 7) in
-         Registers.set state.registers ~register:0xf ~value:msb;
-         state
-       | _ -> err ())
-    | 0x9 ->
-      if Uint8.compare reg_x_u8 reg_y_u8 <> 0
-      then state.pc <- Uint16.(state.pc + of_int 2);
-      state
-    | 0xa ->
-      state.index <- addr_u16;
-      state
-    | 0xb ->
-      let reg_0_u8 = Registers.get state.registers ~register:0 in
-      state.pc <- Uint16.(addr_u16 + of_uint8 reg_0_u8);
-      state
-    | 0xc ->
-      let rand_u8 = Random.int 256 |> Uint8.of_int in
-      Registers.set state.registers ~register:x ~value:Uint8.(logand rand_u8 kk_u8);
-      state
-    (* explanation on collisions in display https://austinmorlan.com/posts/chip8_emulator/#64x32-monochrome-display-memory *)
-    | 0xd ->
-      let index = Uint16.to_int state.index in
-      let y = reg_y % Display.height in
-      let x = reg_x % Display.width in
-      let collision = ref false in
-      for dy = 0 to n - 1 do
-        let byte = Uint8.to_int state.memory.(index + dy) in
-        for dx = 0 to 7 do
-          let row = y + dy in
-          let col = x + dx in
-          if 0 <= row && row < Display.height && 0 <= col && col < Display.width
-          then (
-            let sprite_pixel = byte land (0x80 lsr dx) <> 0 in
-            let screen_pixel = Display.get state.display ~row ~col in
-            let flip_pixel = Bool.(sprite_pixel <> screen_pixel) in
-            collision := !collision || sprite_pixel;
-            Display.set state.display ~row ~col ~value:flip_pixel)
-        done
-      done;
-      Registers.set
-        state.registers
-        ~register:0xf
-        ~value:(if !collision then Uint8.one else Uint8.zero);
-      state
-    | 0xe ->
-      (match kk with
-       | 0x9e -> err ()
-       | 0xa1 -> err ()
-       | _ -> err ())
-    | 0xf ->
-      (match kk with
-       | 0x07 ->
-         Registers.set state.registers ~register:x ~value:state.delay_timer;
-         state
-       | 0x0a -> err ()
-       | 0x15 ->
-         state.delay_timer <- reg_x_u8;
-         state
-       | 0x18 ->
-         state.sound_timer <- reg_x_u8;
-         state
-       | 0x1e ->
-         state.index <- Uint16.(state.index + of_uint8 reg_x_u8);
-         state
-       | 0x29 ->
-         (* a bit magical since the length of each font sprite is 5, and i packed them in starting at 0x0 *)
-         state.index <- Uint16.of_int (reg_x * 5);
-         state
-       | 0x33 ->
-         let index = Uint16.to_int state.index in
-         let ones = reg_x % 10 in
-         let tens = reg_x / 10 % 10 in
-         let hundreds = reg_x / 100 in
-         let bcd_array = [| hundreds; tens; ones |] |> Array.map ~f:Uint8.of_int in
-         Array.blit ~src:bcd_array ~src_pos:0 ~dst:state.memory ~dst_pos:index ~len:3;
-         state
-       | 0x55 ->
-         for i = 0 to x do
-           let index = Uint16.to_int state.index in
-           let reg_i_u8 = Registers.get state.registers ~register:i in
-           Memory.set state.memory ~index:(index + i) ~value:reg_i_u8
-         done;
-         state
-       | 0x65 ->
-         for i = 0 to x do
-           let index = Uint16.to_int state.index in
-           let memory_i_u8 = Memory.get state.memory ~index:(index + i) in
-           Registers.set state.registers ~register:i ~value:memory_i_u8
-         done;
-         state
-       | _ -> err ())
-    | _ -> err ();
+  let step state =
+    let pc = state.pc in
+    let instr = Memory.read_instruction ~memory:state.memory ~index:pc in
+    let addr = instr land 0x0fff in
+    let err () = failwith (Printf.sprintf "unimplemented: 0x%04x (pc=0x%04x)" instr pc) in
+    state.pc <- state.pc + 2;
+    let op, x, y, n = nibbles_of_instruction instr in
+    let kk = Memory.read_byte ~memory:state.memory ~index:(pc + 1) in
+    let reg_x = Registers.get state.registers ~register:x in
+    let reg_y = Registers.get state.registers ~register:y in
+    print_endline (Printf.sprintf "Processing: 0x%04x (pc=0x%04x)" instr pc);
+    (match op with
+     | 0x0 ->
+       (match instr with
+        | 0x00e0 -> state.display <- Display.init
+        | 0x00ee -> state.pc <- Stack.pop_exn state.stack
+        | _ -> err ())
+     | 0x1 -> state.pc <- addr
+     | 0x2 ->
+       Stack.push state.stack state.pc;
+       state.pc <- addr
+     | 0x3 -> if reg_x = kk then state.pc <- state.pc + 2
+     | 0x4 -> if reg_x <> kk then state.pc <- state.pc + 2
+     | 0x5 -> if reg_x = reg_y then state.pc <- state.pc + 2
+     | 0x6 -> Registers.set state.registers ~register:x ~value:kk
+     | 0x7 -> Registers.set state.registers ~register:x ~value:((reg_x + kk) % 0x100)
+     | 0x8 ->
+       (match n with
+        | 0x0 -> Registers.set state.registers ~register:x ~value:reg_y
+        | 0x1 ->
+          Registers.set state.registers ~register:x ~value:(reg_x lor reg_y);
+          Registers.set state.registers ~register:0xf ~value:0
+        | 0x2 ->
+          Registers.set state.registers ~register:x ~value:(reg_x land reg_y);
+          Registers.set state.registers ~register:0xf ~value:0
+        | 0x3 ->
+          Registers.set state.registers ~register:x ~value:(reg_x lxor reg_y);
+          Registers.set state.registers ~register:0xf ~value:0
+        | 0x4 ->
+          let x_plus_y = reg_x + reg_y in
+          let carry = x_plus_y / 0xff in
+          Registers.set state.registers ~register:x ~value:(x_plus_y % 0x100);
+          Registers.set state.registers ~register:0xf ~value:carry
+        | 0x5 ->
+          let x_minus_y = reg_x - reg_y in
+          let borrow = if reg_x >= reg_y then 1 else 0 in
+          Registers.set state.registers ~register:x ~value:((x_minus_y + 0x100) % 0x100);
+          Registers.set state.registers ~register:0xf ~value:borrow
+        | 0x6 ->
+          let lsb = reg_x land 0x001 in
+          Registers.set state.registers ~register:x ~value:(reg_x lsr 1);
+          Registers.set state.registers ~register:0xf ~value:lsb
+        | 0x7 ->
+          let y_minus_x = reg_y - reg_x in
+          let borrow = if reg_y >= reg_x then 1 else 0 in
+          Registers.set state.registers ~register:x ~value:((y_minus_x + 0x100) % 0x100);
+          Registers.set state.registers ~register:0xf ~value:borrow
+        | 0xe ->
+          let msb = (reg_x land 0x80) lsr 7 in
+          Registers.set state.registers ~register:x ~value:((reg_x lsl 1) % 0x100);
+          Registers.set state.registers ~register:0xf ~value:msb
+        | _ -> err ())
+     | 0x9 -> if reg_x <> reg_y then state.pc <- state.pc + 2
+     | 0xa -> state.index <- addr
+     | 0xb ->
+       let reg_0 = Registers.get state.registers ~register:0 in
+       state.pc <- (addr + reg_0) % 0xffff
+     | 0xc ->
+       let rand = Random.int 256 in
+       Registers.set state.registers ~register:x ~value:(rand land kk)
+     | 0xd ->
+       let y = reg_y % Display.height in
+       let x = reg_x % Display.width in
+       let collision = ref false in
+       for dy = 0 to n - 1 do
+         let byte = state.memory.(state.index + dy) in
+         for dx = 0 to 7 do
+           let row = y + dy in
+           let col = x + dx in
+           if 0 <= row && row < Display.height && 0 <= col && col < Display.width
+           then (
+             let sprite_pixel = byte land (0x80 lsr dx) <> 0 in
+             let screen_pixel = Display.get state.display ~row ~col in
+             let flip_pixel = Bool.(sprite_pixel <> screen_pixel) in
+             collision := !collision || sprite_pixel;
+             Display.set state.display ~row ~col ~value:flip_pixel)
+         done
+       done;
+       Registers.set state.registers ~register:0xf ~value:(if !collision then 1 else 0)
+     | 0xe ->
+       (match kk with
+        | 0x9e -> err ()
+        | 0xa1 -> err ()
+        | _ -> err ())
+     | 0xf ->
+       (match kk with
+        | 0x07 -> Registers.set state.registers ~register:x ~value:state.delay_timer
+        | 0x0a -> err ()
+        | 0x15 -> state.delay_timer <- reg_x
+        | 0x18 -> state.sound_timer <- reg_x
+        | 0x1e -> state.index <- (state.index + reg_x) % 0x10000
+        | 0x29 -> state.index <- reg_x * 5
+        | 0x33 ->
+          let ones = reg_x % 10 in
+          let tens = reg_x / 10 % 10 in
+          let hundreds = reg_x / 100 in
+          let bcd_array = [| hundreds; tens; ones |] in
+          Array.blit
+            ~src:bcd_array
+            ~src_pos:0
+            ~dst:state.memory
+            ~dst_pos:state.index
+            ~len:3
+        | 0x55 ->
+          for i = 0 to x do
+            let reg_i = Registers.get state.registers ~register:i in
+            Memory.set state.memory ~index:(state.index + i) ~value:reg_i
+          done
+        | 0x65 ->
+          for i = 0 to x do
+            let memory_i = Memory.get state.memory ~index:(state.index + i) in
+            Registers.set state.registers ~register:i ~value:memory_i
+          done
+        | _ -> err ())
+     | _ -> err ());
+    state
   ;;
 
   let rec run state =
-    (* print_s [%sexp (state : t)]; *)
     let state = step state in
     Display.show state.display;
     print_endline "";
@@ -421,18 +317,15 @@ module Cpu = struct
   ;;
 end
 
-(* module Timer = struct end *)
-
-let read_rom () : Uint8.t array =
+let read_rom () : int array =
   let bytes = In_channel.input_all In_channel.stdin in
-  String.to_array bytes |> Array.map ~f:(fun ch -> ch |> Char.to_int |> Uint8.of_int)
+  String.to_array bytes |> Array.map ~f:Char.to_int
 ;;
 
 let () =
   let rom = read_rom () in
   let memory = Memory.load ~rom ~memory:Memory.init in
-  (* same here, it's not happy with type Memory.t *)
-  print_s [%sexp (memory : Uint8.t array)];
+  print_s [%sexp (memory : int array)];
   let state = Cpu.init ~rom in
   Cpu.run state
 ;;
