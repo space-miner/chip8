@@ -2,7 +2,9 @@
 
 chip8 is a fantasy console created by joe weisbecker in the 70s. originally developed for the cosmac vip, it has gained popularity as a simple system that can run a variety of classic games and applications. the chip8 system has 4kb of addressable memory, 16 general-purpose registers (v0-vf), and supports monochrome graphics and basic input.
 
-![image is from the test suite (i'll add a better one once it can handle real games and has keypad support)](https://img.imgdd.com/f210f3.fd3ba59a-fde9-4ace-8c2f-052e4df6a117.png)
+![](https://img.imgdd.com/f210f3.a835e25a-4331-42f5-9f13-631d9c4a8489.png)
+
+![](https://img.imgdd.com/f210f3.fd3ba59a-fde9-4ace-8c2f-052e4df6a117.png)
 
 ### specifications
 * memory: chip-8 has direct access to up to 4 kilobytes of ram
