@@ -26,6 +26,6 @@ chip8 is a fantasy console created by joe weisbecker in the 70s. originally deve
 - [x] refactor to not depend on stdint 
 - [ ] consider moving opcode functions out of step
 - [ ] move some modules into lib
-- [ ] test on other chip8 roms -- e.g. pong
+- [x] test on other chip8 roms -- e.g. pong
 - [ ] add beeps and test on rom #7
 

@@ -340,11 +340,12 @@ module Chip8 = struct
   ;;
 
   let run cpu event renderer =
-    let instr = Memory.read_instruction ~memory:cpu.memory ~index:cpu.pc in
-    print_endline (Printf.sprintf "processing: 0x%04x (pc=0x%04x)" instr cpu.pc);
-    if Option.is_some cpu.key
-    then print_endline (Printf.sprintf "pressing key: %x" (Option.value_exn cpu.key));
-    Display.show cpu.display;
+    (* uncomment to debug *)
+    (* let instr = Memory.read_instruction ~memory:cpu.memory ~index:cpu.pc in *)
+    (* print_endline (Printf.sprintf "processing: 0x%04x (pc=0x%04x)" instr cpu.pc); *)
+    (* if Option.is_some cpu.key *)
+    (* then print_endline (Printf.sprintf "pressing key: %x" (Option.value_exn cpu.key)); *)
+    (* Display.show cpu.display; *)
     step cpu;
     clear_graphics renderer;
     draw_graphics cpu renderer;
@@ -364,8 +365,10 @@ let () =
   let event = Sdl.Event.create () in
   let renderer = Chip8.init_graphics () in
   while true do
-    if Float.(Unix.gettimeofday () -. !last_tick >= 1. /. 1000.)
+    if Float.(Unix.gettimeofday () -. !last_tick >= 1. /. 800.)
     then (
+      if cpu.delay_timer > 0 then cpu.delay_timer <- cpu.delay_timer - 1;
+      if cpu.sound_timer > 0 then cpu.sound_timer <- cpu.sound_timer - 1;
       Chip8.run cpu event renderer;
       last_tick := Unix.gettimeofday ())
   done
