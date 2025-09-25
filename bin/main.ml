@@ -216,27 +216,27 @@ module Chip8 = struct
     | 0xa -> cpu.index <- addr
     | 0xb ->
       let reg_0 = Registers.get cpu.registers ~register:0 in
-      cpu.pc <- (addr + reg_0) % 0xffff
+      cpu.pc <- addr + reg_0
     | 0xc ->
       let rand = Random.int 256 in
       Registers.set cpu.registers ~register:x ~value:(rand land kk)
     | 0xd ->
-      let y = reg_y % Display.height in
-      let x = reg_x % Display.width in
+      let start_x = reg_x in
+      let start_y = reg_y in
       let collision = ref false in
       for dy = 0 to n - 1 do
-        let byte = cpu.memory.(cpu.index + dy) in
-        for dx = 0 to 7 do
-          let row = y + dy in
-          let col = x + dx in
-          if 0 <= row && row < Display.height && 0 <= col && col < Display.width
-          then (
-            let sprite_pixel = byte land (0x80 lsr dx) <> 0 in
-            let screen_pixel = Display.get cpu.display ~row ~col in
-            let collide = Bool.(sprite_pixel = screen_pixel) in
-            if collide then collision := true;
-            Display.set cpu.display ~row ~col ~value:Bool.(sprite_pixel <> screen_pixel))
-        done
+        let row = start_y + dy in
+        if row < Display.height then (
+          let byte = cpu.memory.(cpu.index + dy) in
+          for dx = 0 to 7 do
+            let col = start_x + dx in
+            if col < Display.width then (
+              let sprite_pixel = byte land (0x80 lsr dx) <> 0 in
+              if sprite_pixel then (
+                let screen_pixel = Display.get cpu.display ~row ~col in
+                if screen_pixel then collision := true;
+                Display.set cpu.display ~row ~col ~value:(not screen_pixel)))
+          done)
       done;
       Registers.set cpu.registers ~register:0xf ~value:(if !collision then 1 else 0)
     | 0xe ->
@@ -246,13 +246,16 @@ module Chip8 = struct
          then cpu.pc <- cpu.pc + 2
        | 0xa1 ->
          (match cpu.key with
-          | None -> ()
+          | None -> cpu.pc <- cpu.pc + 2
           | Some k -> if k <> reg_x then cpu.pc <- cpu.pc + 2)
        | _ -> err ())
     | 0xf ->
       (match kk with
        | 0x07 -> Registers.set cpu.registers ~register:x ~value:cpu.delay_timer
-       | 0x0a -> if Option.is_none cpu.key then cpu.pc <- cpu.pc + 2
+       | 0x0a -> 
+         (match cpu.key with
+          | None -> cpu.pc <- cpu.pc - 2
+          | Some k -> Registers.set cpu.registers ~register:x ~value:k)
        | 0x15 -> cpu.delay_timer <- reg_x
        | 0x18 -> cpu.sound_timer <- reg_x
        | 0x1e -> cpu.index <- (cpu.index + reg_x) % 0x10000
@@ -267,12 +270,14 @@ module Chip8 = struct
          for i = 0 to x do
            let reg_i = Registers.get cpu.registers ~register:i in
            Memory.set cpu.memory ~index:(cpu.index + i) ~value:reg_i
-         done
+         done;
+         cpu.index <- cpu.index + x + 1
        | 0x65 ->
          for i = 0 to x do
            let memory_i = Memory.get cpu.memory ~index:(cpu.index + i) in
            Registers.set cpu.registers ~register:i ~value:memory_i
-         done
+         done;
+         cpu.index <- cpu.index + x + 1
        | _ -> err ())
     | _ -> err ()
   ;;
@@ -280,7 +285,7 @@ module Chip8 = struct
   let or_exit = function
     | Error (`Msg e) ->
       Sdl.log "%s" e;
-      Caml.exit 1
+      Stdlib.exit 1
     | Ok x -> x
   ;;
 
@@ -332,10 +337,10 @@ module Chip8 = struct
          | `X -> cpu.key <- Some 0x0
          | `C -> cpu.key <- Some 0xb
          | `V -> cpu.key <- Some 0xf
-         | `Escape -> Caml.exit 0
+         | `Escape -> Stdlib.exit 0
          | _ -> ())
       | `Key_up -> cpu.key <- None
-      | `Quit -> Caml.exit 0
+      | `Quit -> Stdlib.exit 0
       | _ -> ())
   ;;
 
@@ -349,7 +354,7 @@ module Chip8 = struct
     step cpu;
     clear_graphics renderer;
     draw_graphics cpu renderer;
-    handle_input cpu event
+    handle_input cpu event;
   ;;
 end
 
@@ -360,16 +365,21 @@ let read_rom () : int array =
 
 let () =
   let last_tick = ref 0. in
+  let last_timer_tick = ref 0. in
   let rom = read_rom () in
   let cpu = Chip8.init ~rom in
   let event = Sdl.Event.create () in
   let renderer = Chip8.init_graphics () in
   while true do
-    if Float.(Unix.gettimeofday () -. !last_tick >= 1. /. 800.)
+    let current_time = Unix.gettimeofday () in
+    if Float.(current_time -. !last_tick >= 1. /. 500.)
+    then (
+      Chip8.run cpu event renderer;
+      last_tick := current_time);
+    if Float.(current_time -. !last_timer_tick >= 1. /. 60.)
     then (
       if cpu.delay_timer > 0 then cpu.delay_timer <- cpu.delay_timer - 1;
       if cpu.sound_timer > 0 then cpu.sound_timer <- cpu.sound_timer - 1;
-      Chip8.run cpu event renderer;
-      last_tick := Unix.gettimeofday ())
+      last_timer_tick := current_time)
   done
 ;;
