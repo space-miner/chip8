@@ -20,12 +20,3 @@ chip8 is a fantasy console created by joe weisbecker in the 70s. originally deve
 * chip8 emulation: emulates the chip8 system, allowing you to run chip8 roms.
 * graphics: display emulation for chip8 graphics.
 * input: support for handling keyboard input.
-
-### todo
-- [x] handle keypad inputs and test roms #5 #6
-- [x] refactor to not depend on stdint 
-- [ ] consider moving opcode functions out of step
-- [ ] move some modules into lib
-- [x] test on other chip8 roms -- e.g. pong
-- [ ] add beeps and test on rom #7
-
